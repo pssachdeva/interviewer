@@ -34,11 +34,13 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data
+# Data files (but not data/ directory itself)
 *.csv
 *.parquet
-data/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Streamlit secrets (local)
+.streamlit/secrets.toml

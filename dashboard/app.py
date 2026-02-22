@@ -6,6 +6,7 @@ from datasets import load_dataset
 import sys
 sys.path.insert(0, "src")
 from interviewer.parser import parse_transcript
+from interviewer.github import load_comments, save_comment, get_github_token
 
 
 st.set_page_config(
@@ -80,6 +81,82 @@ st.markdown("""
         justify-content: flex-start;
     }
 
+    /* User bubble with actions row */
+    .user-bubble-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        max-width: 85%;
+        margin-left: auto;
+    }
+
+    .bubble-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 4px;
+        align-items: center;
+    }
+
+    .action-btn {
+        background: #333;
+        border: none;
+        color: #888;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .action-btn:hover {
+        background: #444;
+        color: #fff;
+    }
+
+    .comment-count {
+        background: #ff6b35;
+        color: white;
+        min-width: 24px;
+        height: 24px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        padding: 0 6px;
+    }
+
+    .comment-count:hover {
+        background: #ff8555;
+    }
+
+    /* Comment bubbles - distinct style */
+    .comment-bubble {
+        background-color: #3d2a1a;
+        color: #f0d0a0;
+        padding: 10px 14px;
+        border-radius: 12px;
+        margin: 4px 0;
+        font-size: 14px;
+        border-left: 3px solid #ff6b35;
+    }
+
+    .comment-timestamp {
+        font-size: 11px;
+        color: #888;
+        margin-top: 4px;
+    }
+
+    .comments-section {
+        margin: 8px 0 16px 0;
+        padding-left: 20px;
+    }
+
     /* Add padding at bottom so content isn't hidden by nav */
     .main-content {
         padding-bottom: 80px;
@@ -125,8 +202,23 @@ st.markdown("""
         border-color: #555;
     }
 
+    /* Small inline buttons for comment actions */
+    .small-btn button {
+        min-height: 32px !important;
+        min-width: 32px !important;
+        font-size: 14px !important;
+        padding: 0 12px !important;
+    }
+
     /* Number input dark mode */
     .stNumberInput > div > div > input {
+        background-color: #2a2a2a;
+        color: #e0e0e0;
+        border-color: #444;
+    }
+
+    /* Text area dark mode */
+    .stTextArea textarea {
         background-color: #2a2a2a;
         color: #e0e0e0;
         border-color: #444;
@@ -189,14 +281,25 @@ def load_all_interviews():
     return interviews
 
 
+@st.cache_data(ttl=60)
+def load_comments_cached():
+    """Load comments with short TTL for freshness."""
+    return load_comments()
+
+
 # Load data
 interviews = load_all_interviews()
+all_comments = load_comments_cached()
 
 # Initialize session state
 if "current_index" not in st.session_state:
     st.session_state.current_index = 0
 if "selected_split" not in st.session_state:
     st.session_state.selected_split = "all"
+if "adding_comment_to" not in st.session_state:
+    st.session_state.adding_comment_to = None  # (transcript_id, message_index) or None
+if "expanded_comments" not in st.session_state:
+    st.session_state.expanded_comments = set()  # set of (transcript_id, message_index)
 
 
 # Filter by split
@@ -226,11 +329,12 @@ if current_index >= total_count:
     st.session_state.current_index = 0
 
 current_interview = filtered_interviews[current_index]
+transcript_id = current_interview["id"]
 
 # Header
 st.markdown(
     f'<div class="interview-header">'
-    f'<strong>{current_interview["id"]}</strong> · {current_interview["split"]} · '
+    f'<strong>{transcript_id}</strong> · {current_interview["split"]} · '
     f'{current_index + 1} of {total_count}'
     f'</div>',
     unsafe_allow_html=True
@@ -250,22 +354,104 @@ with top_col3:
 # Chat messages
 st.markdown('<div class="main-content">', unsafe_allow_html=True)
 
-for msg in current_interview["messages"]:
-    bubble_class = "assistant-bubble" if msg.role == "assistant" else "user-bubble"
-    container_class = msg.role
+has_github_token = get_github_token() is not None
 
+for msg_idx, msg in enumerate(current_interview["messages"]):
     # Escape HTML in content and convert newlines
     content = msg.content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     content = content.replace("\n", "<br>")
 
-    st.markdown(
-        f'<div class="bubble-container {container_class}">'
-        f'<div class="chat-bubble {bubble_class}">{content}</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+    if msg.role == "assistant":
+        # Assistant message - simple bubble
+        st.markdown(
+            f'<div class="bubble-container assistant">'
+            f'<div class="chat-bubble assistant-bubble">{content}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        # User message - bubble with comment actions
+        comment_key = (transcript_id, msg_idx)
+        msg_comments = all_comments.get(comment_key, [])
+        comment_count = len(msg_comments)
+        is_expanded = comment_key in st.session_state.expanded_comments
+        is_adding = st.session_state.adding_comment_to == comment_key
+
+        # Render the user bubble
+        st.markdown(
+            f'<div class="bubble-container user">'
+            f'<div class="chat-bubble user-bubble">{content}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # Action buttons row (only if GitHub token configured)
+        if has_github_token:
+            btn_cols = st.columns([3, 1, 1] if comment_count > 0 else [4, 1])
+
+            with btn_cols[-1]:
+                # Add comment button
+                if st.button("＋", key=f"add_{msg_idx}", help="Add comment"):
+                    if is_adding:
+                        st.session_state.adding_comment_to = None
+                    else:
+                        st.session_state.adding_comment_to = comment_key
+                    st.rerun()
+
+            if comment_count > 0:
+                with btn_cols[-2]:
+                    # Comment count badge
+                    if st.button(f"{comment_count}", key=f"count_{msg_idx}", help="Show/hide comments"):
+                        if is_expanded:
+                            st.session_state.expanded_comments.discard(comment_key)
+                        else:
+                            st.session_state.expanded_comments.add(comment_key)
+                        st.rerun()
+
+        # Show existing comments if expanded
+        if is_expanded and msg_comments:
+            st.markdown('<div class="comments-section">', unsafe_allow_html=True)
+            for comment in msg_comments:
+                comment_text = comment["text"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                comment_text = comment_text.replace("\n", "<br>")
+                timestamp = comment.get("timestamp", "")[:10]  # Just the date
+                st.markdown(
+                    f'<div class="comment-bubble">{comment_text}'
+                    f'<div class="comment-timestamp">{timestamp}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Show add comment form if active
+        if is_adding:
+            new_comment = st.text_area(
+                "Add comment",
+                key=f"comment_text_{msg_idx}",
+                height=80,
+                label_visibility="collapsed",
+                placeholder="Write your comment...",
+            )
+            submit_col, cancel_col = st.columns(2)
+            with submit_col:
+                if st.button("Submit", key=f"submit_{msg_idx}", use_container_width=True):
+                    if new_comment.strip():
+                        if save_comment(transcript_id, msg_idx, new_comment.strip()):
+                            st.session_state.adding_comment_to = None
+                            # Clear the cache to reload comments
+                            load_comments_cached.clear()
+                            st.success("Comment saved!")
+                            st.rerun()
+            with cancel_col:
+                if st.button("Cancel", key=f"cancel_{msg_idx}", use_container_width=True):
+                    st.session_state.adding_comment_to = None
+                    st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+# Show warning if no GitHub token
+if not has_github_token:
+    st.caption("💡 Add GITHUB_TOKEN to secrets to enable comments")
 
 # Navigation buttons at bottom
 st.markdown("---")
