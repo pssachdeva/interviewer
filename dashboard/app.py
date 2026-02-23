@@ -1,6 +1,7 @@
 """Mobile-friendly interview viewer dashboard."""
 
 import streamlit as st
+import streamlit.components.v1 as components
 from datasets import load_dataset
 
 import sys
@@ -65,6 +66,16 @@ st.markdown("""
         margin-left: auto;
         margin-right: 0;
         border-bottom-right-radius: 4px;
+    }
+
+    /* Full-width variant for rows with inline action buttons */
+    .user-bubble-inline {
+        width: auto;
+        max-width: 93% !important;
+        margin-left: auto !important;
+        margin-right: 0 !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
     }
 
     /* Container for proper alignment */
@@ -157,11 +168,6 @@ st.markdown("""
         padding-left: 20px;
     }
 
-    /* Add padding at bottom so content isn't hidden by nav */
-    .main-content {
-        padding-bottom: 80px;
-    }
-
     /* Header styling */
     .interview-header {
         font-size: 14px;
@@ -210,6 +216,33 @@ st.markdown("""
         padding: 0 12px !important;
     }
 
+    /* Inline action buttons (same row as bubble) */
+    [data-testid="stHorizontalBlock"] .stButton > button {
+        min-height: 36px !important;
+        min-width: 36px !important;
+        padding: 0 !important;
+        font-size: 16px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        line-height: 1 !important;
+    }
+
+    [data-testid="stHorizontalBlock"] .stButton > button > div {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        height: 100% !important;
+    }
+
+    [data-testid="stHorizontalBlock"] .stButton > button > div > p {
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1 !important;
+        text-align: center !important;
+    }
+
     /* Number input dark mode */
     .stNumberInput > div > div > input {
         background-color: #2a2a2a;
@@ -222,6 +255,34 @@ st.markdown("""
         background-color: #2a2a2a;
         color: #e0e0e0;
         border-color: #444;
+    }
+
+    .comment-form-top-gap {
+        height: 14px;
+    }
+
+    .comment-form-controls-gap {
+        height: 10px;
+    }
+
+    @keyframes comment-form-reveal {
+        from {
+            opacity: 0;
+            transform: translateY(-8px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Animate comment text box + action row on show */
+    div[data-testid="stTextArea"] {
+        animation: comment-form-reveal 180ms ease-out;
+    }
+
+    div[data-testid="stTextArea"] + div[data-testid="stHorizontalBlock"] {
+        animation: comment-form-reveal 220ms ease-out;
     }
 
     /* Divider */
@@ -248,6 +309,12 @@ st.markdown("""
     [data-testid="stHorizontalBlock"] {
         margin-bottom: 0 !important;
         gap: 0.5rem !important;
+    }
+
+    /* Add consistent vertical spacing to user message rows (columns with buttons) */
+    [data-testid="stHorizontalBlock"]:has(.user-bubble-inline) {
+        margin-top: 8px !important;
+        margin-bottom: 8px !important;
     }
 
     /* Reduce vertical spacing on all elements */
@@ -287,6 +354,68 @@ def load_comments_cached():
     return load_comments()
 
 
+def scroll_page_to_top():
+    """Scroll the app viewport to the top."""
+    components.html(
+        """
+        <script>
+        (function () {
+            const p = window.parent || window;
+
+            function doScroll() {
+                p.scrollTo(0, 0);
+
+                if (p.document && p.document.documentElement) {
+                    p.document.documentElement.scrollTop = 0;
+                }
+                if (p.document && p.document.body) {
+                    p.document.body.scrollTop = 0;
+                }
+
+                if (p.document) {
+                    const candidates = [
+                        '[data-testid="stAppViewContainer"]',
+                        'section.main',
+                        '[data-testid="stMain"]',
+                        '[data-testid="stMainBlockContainer"]'
+                    ];
+                    for (const sel of candidates) {
+                        const el = p.document.querySelector(sel);
+                        if (el) {
+                            el.scrollTop = 0;
+                        }
+                    }
+                }
+            }
+
+            // Run repeatedly to handle Streamlit rerender timing.
+            doScroll();
+            let count = 0;
+            const id = setInterval(() => {
+                doScroll();
+                count += 1;
+                if (count >= 12) {
+                    clearInterval(id);
+                }
+            }, 40);
+            p.requestAnimationFrame(doScroll);
+            setTimeout(doScroll, 120);
+            setTimeout(doScroll, 260);
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+def trigger_scroll_to_top_if_needed():
+    """Inject scroll script at end of render when requested."""
+    if st.session_state.scroll_to_top:
+        scroll_page_to_top()
+        st.session_state.scroll_to_top = False
+
+
 # Load data
 interviews = load_all_interviews()
 all_comments = load_comments_cached()
@@ -300,6 +429,8 @@ if "adding_comment_to" not in st.session_state:
     st.session_state.adding_comment_to = None  # (transcript_id, message_index) or None
 if "expanded_comments" not in st.session_state:
     st.session_state.expanded_comments = set()  # set of (transcript_id, message_index)
+if "scroll_to_top" not in st.session_state:
+    st.session_state.scroll_to_top = False
 
 
 # Filter by split
@@ -346,13 +477,23 @@ with top_col1:
     if st.button("← Prev", key="prev_top", use_container_width=True, disabled=(current_index == 0)):
         st.session_state.current_index = current_index - 1
         st.rerun()
+with top_col2:
+    # Jump to specific interview (top nav)
+    top_new_index = st.number_input(
+        "Go to top",
+        min_value=1,
+        max_value=total_count,
+        value=current_index + 1,
+        label_visibility="collapsed",
+    )
+    if top_new_index - 1 != current_index:
+        st.session_state.current_index = top_new_index - 1
+        st.rerun()
 with top_col3:
     if st.button("Next →", key="next_top", use_container_width=True, disabled=(current_index >= total_count - 1)):
         st.session_state.current_index = current_index + 1
+        st.session_state.scroll_to_top = True
         st.rerun()
-
-# Chat messages
-st.markdown('<div class="main-content">', unsafe_allow_html=True)
 
 has_github_token = get_github_token() is not None
 
@@ -377,36 +518,52 @@ for msg_idx, msg in enumerate(current_interview["messages"]):
         is_expanded = comment_key in st.session_state.expanded_comments
         is_adding = st.session_state.adding_comment_to == comment_key
 
-        # Render the user bubble
-        st.markdown(
-            f'<div class="bubble-container user">'
-            f'<div class="chat-bubble user-bubble">{content}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-        # Action buttons row (only if GitHub token configured)
+        # Render user bubble with action buttons on same line (buttons on left)
         if has_github_token:
-            btn_cols = st.columns([3, 1, 1] if comment_count > 0 else [4, 1])
+            # Columns: [add, count?, bubble, spacer]
+            if comment_count > 0:
+                cols = st.columns([1, 1, 10])
+                add_col, count_col, bubble_col = cols[0], cols[1], cols[2]
+            else:
+                cols = st.columns([1, 11])
+                add_col, bubble_col = cols[0], cols[1]
+                count_col = None
 
-            with btn_cols[-1]:
-                # Add comment button
-                if st.button("＋", key=f"add_{msg_idx}", help="Add comment"):
+            with add_col:
+                if st.button(
+                    "",
+                    key=f"add_{msg_idx}",
+                    help="Add comment",
+                    icon=":material/add:",
+                ):
                     if is_adding:
                         st.session_state.adding_comment_to = None
                     else:
                         st.session_state.adding_comment_to = comment_key
                     st.rerun()
 
-            if comment_count > 0:
-                with btn_cols[-2]:
-                    # Comment count badge
+            if count_col is not None:
+                with count_col:
                     if st.button(f"{comment_count}", key=f"count_{msg_idx}", help="Show/hide comments"):
                         if is_expanded:
                             st.session_state.expanded_comments.discard(comment_key)
                         else:
                             st.session_state.expanded_comments.add(comment_key)
                         st.rerun()
+
+            with bubble_col:
+                st.markdown(
+                    f'<div class="chat-bubble user-bubble user-bubble-inline">{content}</div>',
+                    unsafe_allow_html=True
+                )
+        else:
+            # No token - just render the bubble
+            st.markdown(
+                f'<div class="bubble-container user">'
+                f'<div class="chat-bubble user-bubble">{content}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
         # Show existing comments if expanded
         if is_expanded and msg_comments:
@@ -425,29 +582,41 @@ for msg_idx, msg in enumerate(current_interview["messages"]):
 
         # Show add comment form if active
         if is_adding:
-            new_comment = st.text_area(
-                "Add comment",
-                key=f"comment_text_{msg_idx}",
-                height=80,
-                label_visibility="collapsed",
-                placeholder="Write your comment...",
-            )
-            submit_col, cancel_col = st.columns(2)
-            with submit_col:
-                if st.button("Submit", key=f"submit_{msg_idx}", use_container_width=True):
-                    if new_comment.strip():
-                        if save_comment(transcript_id, msg_idx, new_comment.strip()):
-                            st.session_state.adding_comment_to = None
-                            # Clear the cache to reload comments
-                            load_comments_cached.clear()
-                            st.success("Comment saved!")
-                            st.rerun()
-            with cancel_col:
-                if st.button("Cancel", key=f"cancel_{msg_idx}", use_container_width=True):
-                    st.session_state.adding_comment_to = None
-                    st.rerun()
+            if has_github_token:
+                # Keep the form aligned under the user bubble column.
+                if comment_count > 0:
+                    form_cols = st.columns([1, 1, 10])
+                    form_col = form_cols[2]
+                else:
+                    form_cols = st.columns([1, 11])
+                    form_col = form_cols[1]
+            else:
+                form_col = st.container()
 
-st.markdown('</div>', unsafe_allow_html=True)
+            with form_col:
+                st.markdown('<div class="comment-form-top-gap"></div>', unsafe_allow_html=True)
+                new_comment = st.text_area(
+                    "Add comment",
+                    key=f"comment_text_{msg_idx}",
+                    height=100,
+                    label_visibility="collapsed",
+                    placeholder="Write your comment...",
+                )
+                st.markdown('<div class="comment-form-controls-gap"></div>', unsafe_allow_html=True)
+                submit_col, _, cancel_col = st.columns([1, 0.18, 1])
+                with submit_col:
+                    if st.button("Submit", key=f"submit_{msg_idx}", use_container_width=True):
+                        if new_comment.strip():
+                            if save_comment(transcript_id, msg_idx, new_comment.strip()):
+                                st.session_state.adding_comment_to = None
+                                # Clear the cache to reload comments
+                                load_comments_cached.clear()
+                                st.success("Comment saved!")
+                                st.rerun()
+                with cancel_col:
+                    if st.button("Cancel", key=f"cancel_{msg_idx}", use_container_width=True):
+                        st.session_state.adding_comment_to = None
+                        st.rerun()
 
 # Show warning if no GitHub token
 if not has_github_token:
@@ -473,9 +642,13 @@ with col2:
     )
     if new_index - 1 != current_index:
         st.session_state.current_index = new_index - 1
+        st.session_state.scroll_to_top = True
         st.rerun()
 
 with col3:
     if st.button("Next →", key="next_bottom", use_container_width=True, disabled=(current_index >= total_count - 1)):
         st.session_state.current_index = current_index + 1
+        st.session_state.scroll_to_top = True
         st.rerun()
+
+trigger_scroll_to_top_if_needed()
