@@ -37,6 +37,7 @@ ENV/
 # Data files (but not data/ directory itself)
 *.csv
 *.parquet
+outputs/runs/
 
 # OS
 .DS_Store

@@ -16,6 +16,45 @@ uv pip install -e ".[dev]"
 streamlit run dashboard/app.py
 ```
 
+## Batch Experiments (OpenAI v1)
+
+Create a prompt and experiment config:
+
+```bash
+# Example files already included:
+# - prompts/opacity_typology_coding.txt
+# - experiments/exp0.0.yaml
+```
+
+Submit a batch experiment:
+
+```bash
+uv run python scripts/submit_experiment.py experiments/exp0.0.yaml
+```
+
+Submit a 25-transcript test run:
+
+```bash
+uv run python scripts/submit_experiment.py --test experiments/exp0.0.yaml
+```
+
+Collect status/results:
+
+```bash
+uv run python scripts/collect_batch_results.py experiments/exp0.0.yaml
+```
+
+Collect the test run:
+
+```bash
+uv run python scripts/collect_batch_results.py --test experiments/exp0.0.yaml
+```
+
+`collect_batch_results.py` now downloads raw output files and automatically writes `results.csv` when `output.jsonl` is available.
+
+Run artifacts are written under `outputs/runs/<experiment_name>/`.
+Test runs are written under `outputs/runs/<experiment_name>__test/`.
+
 ## Deploy to Streamlit Cloud
 
 1. Push this repo to GitHub
