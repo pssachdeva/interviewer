@@ -57,27 +57,32 @@ class _FakeProvider:
                                                     "summary": "A summary.",
                                                     "mechanisms": {
                                                         "voice_opacity": {
-                                                            "present": False,
+                                                            "level": "none",
+                                                            "form": "none",
                                                             "evidence": [],
                                                             "rationale": "No evidence.",
                                                         },
                                                         "vulnerability_opacity": {
-                                                            "present": True,
+                                                            "level": "potential",
+                                                            "form": "production",
                                                             "evidence": ["Uses AI when stuck."],
                                                             "rationale": "Masks uncertainty.",
                                                         },
                                                         "provenance_opacity": {
-                                                            "present": False,
+                                                            "level": "none",
+                                                            "form": "none",
                                                             "evidence": [],
                                                             "rationale": "No evidence.",
                                                         },
                                                         "attention_opacity": {
-                                                            "present": False,
+                                                            "level": "none",
+                                                            "form": "none",
                                                             "evidence": [],
                                                             "rationale": "No evidence.",
                                                         },
                                                         "investment_opacity": {
-                                                            "present": False,
+                                                            "level": "none",
+                                                            "form": "none",
                                                             "evidence": [],
                                                             "rationale": "No evidence.",
                                                         },

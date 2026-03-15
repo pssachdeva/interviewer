@@ -1,0 +1,8 @@
+name: exp0.3
+provider: openai
+model: gpt-5.4
+prompt_file: prompts/opacity_typology_coding_v3.txt
+reasoning_effort: medium
+request:
+  temperature: 1
+  max_output_tokens: 10000

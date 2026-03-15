@@ -18,6 +18,8 @@ MECHANISM_KEYS = [
     "attention_opacity",
     "investment_opacity",
 ]
+LEVELS = {"none", "potential", "clear"}
+FORMS = {"production", "avoidance", "mixed", "none"}
 
 
 def _extract_output_text(record: dict[str, Any]) -> str | None:
@@ -44,6 +46,33 @@ def _join_evidence(value: Any) -> str:
     return " || ".join(str(item) for item in value)
 
 
+def _coerce_level(mechanism: dict[str, Any]) -> str:
+    level = mechanism.get("level")
+    if isinstance(level, str) and level in LEVELS:
+        return level
+
+    # Backward compatibility for earlier outputs that used present=true/false.
+    present = mechanism.get("present")
+    if present is True:
+        return "clear"
+    if present is False:
+        return "none"
+
+    return ""
+
+
+def _coerce_form(mechanism: dict[str, Any], level: str) -> str:
+    form = mechanism.get("form")
+    if isinstance(form, str) and form in FORMS:
+        return form
+
+    if level == "none":
+        return "none"
+
+    # Backward compatibility for older outputs that did not include `form`.
+    return ""
+
+
 def _base_row(record: dict[str, Any]) -> dict[str, Any]:
     response = record.get("response") or {}
     body = response.get("body") or {}
@@ -65,7 +94,8 @@ def _base_row(record: dict[str, Any]) -> dict[str, Any]:
     }
 
     for mechanism_key in MECHANISM_KEYS:
-        row[f"{mechanism_key}_present"] = ""
+        row[f"{mechanism_key}_level"] = ""
+        row[f"{mechanism_key}_form"] = ""
         row[f"{mechanism_key}_rationale"] = ""
         row[f"{mechanism_key}_evidence"] = ""
 
@@ -105,7 +135,9 @@ def flatten_output_record(record: dict[str, Any]) -> dict[str, Any]:
             )
             continue
 
-        row[f"{mechanism_key}_present"] = mechanism.get("present")
+        level = _coerce_level(mechanism)
+        row[f"{mechanism_key}_level"] = level
+        row[f"{mechanism_key}_form"] = _coerce_form(mechanism, level)
         rationale = mechanism.get("rationale")
         row[f"{mechanism_key}_rationale"] = rationale if isinstance(rationale, str) else ""
         row[f"{mechanism_key}_evidence"] = _join_evidence(mechanism.get("evidence"))
@@ -157,7 +189,7 @@ def export_results_csv(
                         **{
                             f"{mechanism_key}_{suffix}": ""
                             for mechanism_key in MECHANISM_KEYS
-                            for suffix in ("present", "rationale", "evidence")
+                            for suffix in ("level", "form", "rationale", "evidence")
                         },
                     }
                 )
@@ -183,7 +215,8 @@ def export_results_csv(
     for mechanism_key in MECHANISM_KEYS:
         fieldnames.extend(
             [
-                f"{mechanism_key}_present",
+                f"{mechanism_key}_level",
+                f"{mechanism_key}_form",
                 f"{mechanism_key}_rationale",
                 f"{mechanism_key}_evidence",
             ]
