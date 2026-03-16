@@ -36,3 +36,9 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "ipython>=8.38.0",
+]

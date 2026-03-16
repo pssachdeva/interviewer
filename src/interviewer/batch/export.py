@@ -9,17 +9,16 @@ from typing import Any
 
 from interviewer.batch.config import load_experiment_config
 from interviewer.batch.orchestrator import _run_dir_for
-
-
-MECHANISM_KEYS = [
-    "voice_opacity",
-    "vulnerability_opacity",
-    "provenance_opacity",
-    "attention_opacity",
-    "investment_opacity",
-]
-LEVELS = {"none", "potential", "clear"}
-FORMS = {"production", "avoidance", "mixed", "none"}
+from interviewer.opacity_columns import (
+    BASE_RESULTS_COLUMNS,
+    FORMS,
+    LEVELS,
+    MECHANISM_KEYS,
+    evidence_column,
+    form_column,
+    level_column,
+    rationale_column,
+)
 
 
 def _extract_output_text(record: dict[str, Any]) -> str | None:
@@ -127,10 +126,10 @@ def _base_row(record: dict[str, Any]) -> dict[str, Any]:
     }
 
     for mechanism_key in MECHANISM_KEYS:
-        row[f"{mechanism_key}_level"] = ""
-        row[f"{mechanism_key}_form"] = ""
-        row[f"{mechanism_key}_rationale"] = ""
-        row[f"{mechanism_key}_evidence"] = ""
+        row[level_column(mechanism_key)] = ""
+        row[form_column(mechanism_key)] = ""
+        row[rationale_column(mechanism_key)] = ""
+        row[evidence_column(mechanism_key)] = ""
 
     return row
 
@@ -169,11 +168,11 @@ def flatten_output_record(record: dict[str, Any]) -> dict[str, Any]:
             continue
 
         level = _coerce_level(mechanism)
-        row[f"{mechanism_key}_level"] = level
-        row[f"{mechanism_key}_form"] = _coerce_form(mechanism, level)
+        row[level_column(mechanism_key)] = level
+        row[form_column(mechanism_key)] = _coerce_form(mechanism, level)
         rationale = mechanism.get("rationale")
-        row[f"{mechanism_key}_rationale"] = rationale if isinstance(rationale, str) else ""
-        row[f"{mechanism_key}_evidence"] = _join_evidence(mechanism.get("evidence"))
+        row[rationale_column(mechanism_key)] = rationale if isinstance(rationale, str) else ""
+        row[evidence_column(mechanism_key)] = _join_evidence(mechanism.get("evidence"))
 
     return row
 
@@ -222,9 +221,14 @@ def export_results_csv(
                     "total_tokens": "",
                     "reasoning_tokens": "",
                     **{
-                        f"{mechanism_key}_{suffix}": ""
+                        column: ""
                         for mechanism_key in MECHANISM_KEYS
-                        for suffix in ("level", "form", "rationale", "evidence")
+                        for column in (
+                            level_column(mechanism_key),
+                            form_column(mechanism_key),
+                            rationale_column(mechanism_key),
+                            evidence_column(mechanism_key),
+                        )
                     },
                 }
                 if include_transcript:
@@ -237,34 +241,17 @@ def export_results_csv(
                 row["transcript"] = transcript_map.get(row["transcript_id"], "")
             rows.append(row)
 
-    fieldnames = [
-        "transcript_id",
-    ]
+    fieldnames = ["transcript_id"]
     if include_transcript:
         fieldnames.append("transcript")
-    fieldnames.extend(
-        [
-            "response_status_code",
-            "response_id",
-            "model",
-            "summary",
-            "parse_error",
-            "raw_output_text",
-            "error",
-            "response_error",
-            "input_tokens",
-            "output_tokens",
-            "total_tokens",
-            "reasoning_tokens",
-        ]
-    )
+    fieldnames.extend(column for column in BASE_RESULTS_COLUMNS if column != "transcript_id")
     for mechanism_key in MECHANISM_KEYS:
         fieldnames.extend(
             [
-                f"{mechanism_key}_level",
-                f"{mechanism_key}_form",
-                f"{mechanism_key}_rationale",
-                f"{mechanism_key}_evidence",
+                level_column(mechanism_key),
+                form_column(mechanism_key),
+                rationale_column(mechanism_key),
+                evidence_column(mechanism_key),
             ]
         )
 
