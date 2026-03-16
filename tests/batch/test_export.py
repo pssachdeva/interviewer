@@ -107,6 +107,37 @@ def test_export_results_csv_for_test_run(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
     run_dir = orchestrator._run_dir_for("export-exp", test_mode=True)
     run_dir.mkdir(parents=True)
+    input_jsonl = run_dir / "input.jsonl"
+    input_jsonl.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "custom_id": "work_0000",
+                        "body": {
+                            "input": [
+                                {"role": "system", "content": "prompt"},
+                                {"role": "user", "content": "transcript zero"},
+                            ]
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "custom_id": "work_0001",
+                        "body": {
+                            "input": [
+                                {"role": "system", "content": "prompt"},
+                                {"role": "user", "content": "transcript one"},
+                            ]
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     output_jsonl = run_dir / "output.jsonl"
     output_jsonl.write_text(
         "\n".join(
@@ -119,14 +150,16 @@ def test_export_results_csv_for_test_run(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    csv_path = export_results_csv(experiment_path, test_mode=True)
+    csv_path = export_results_csv(experiment_path, test_mode=True, include_transcript=True)
     assert csv_path == (run_dir / "results.csv").resolve()
 
     with csv_path.open("r", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
 
     assert len(rows) == 2
+    assert list(rows[0].keys())[0:2] == ["transcript_id", "transcript"]
     assert rows[0]["transcript_id"] == "work_0000"
+    assert rows[0]["transcript"] == "transcript zero"
     assert rows[0]["summary"] == "A short analytic summary."
     assert rows[0]["vulnerability_opacity_level"] == "potential"
     assert rows[0]["vulnerability_opacity_form"] == "production"

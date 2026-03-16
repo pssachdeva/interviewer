@@ -23,6 +23,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Collect the test run (first-25-transcripts submission) for this experiment",
     )
+    parser.add_argument(
+        "--include-transcript",
+        action="store_true",
+        help="Include the original transcript text as the second column in the exported CSV",
+    )
     return parser.parse_args(argv)
 
 
@@ -30,7 +35,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     try:
-        result = collect_experiment(args.experiment, test_mode=args.test)
+        result = collect_experiment(
+            args.experiment,
+            test_mode=args.test,
+            include_transcript=args.include_transcript,
+        )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

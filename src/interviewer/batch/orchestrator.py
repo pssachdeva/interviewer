@@ -129,7 +129,11 @@ def submit_experiment(path: str | Path, test_mode: bool = False) -> RunManifest:
     return manifest
 
 
-def collect_experiment(path: str | Path, test_mode: bool = False) -> CollectResult:
+def collect_experiment(
+    path: str | Path,
+    test_mode: bool = False,
+    include_transcript: bool = False,
+) -> CollectResult:
     """Fetch status and download terminal outputs for an experiment run."""
     experiment = load_experiment_config(path)
     run_dir = _run_dir_for(experiment.name, test_mode=test_mode)
@@ -180,7 +184,11 @@ def collect_experiment(path: str | Path, test_mode: bool = False) -> CollectResu
             # Local import avoids a circular dependency with the export module.
             from interviewer.batch.export import export_results_csv
 
-            csv_path = export_results_csv(path, test_mode=test_mode)
+            csv_path = export_results_csv(
+                path,
+                test_mode=test_mode,
+                include_transcript=include_transcript,
+            )
 
     _write_manifest(manifest_path, manifest)
 

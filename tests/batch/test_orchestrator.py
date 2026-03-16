@@ -170,7 +170,7 @@ def test_submit_and_collect_terminal(tmp_path: Path, monkeypatch) -> None:
     assert '"custom_id": "work_0000"' in lines[0]
     assert '"reasoning": {"effort": "medium"}' in lines[0]
 
-    collect_result = orchestrator.collect_experiment(exp_path)
+    collect_result = orchestrator.collect_experiment(exp_path, include_transcript=True)
     assert collect_result.is_terminal
     assert collect_result.output_path is not None
     assert collect_result.error_path is not None
@@ -179,6 +179,9 @@ def test_submit_and_collect_terminal(tmp_path: Path, monkeypatch) -> None:
     assert collect_result.csv_path is not None
     assert collect_result.csv_path.name == "results.csv"
     assert collect_result.csv_path.exists()
+    csv_lines = collect_result.csv_path.read_text(encoding="utf-8").splitlines()
+    assert csv_lines[0].startswith("transcript_id,transcript,")
+    assert "alpha" in csv_lines[1]
     assert (run_dir / "status.json").exists()
 
 

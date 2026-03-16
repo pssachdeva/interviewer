@@ -40,6 +40,39 @@ def _extract_output_text(record: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_user_message(input_record: dict[str, Any]) -> str:
+    body = input_record.get("body") or {}
+    inputs = body.get("input") or []
+    for item in inputs:
+        if item.get("role") == "user":
+            content = item.get("content")
+            if isinstance(content, str):
+                return content
+    return ""
+
+
+def _load_transcript_map(input_jsonl_path: Path) -> dict[str, str]:
+    transcript_map: dict[str, str] = {}
+    if not input_jsonl_path.exists():
+        return transcript_map
+
+    with input_jsonl_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+
+            custom_id = record.get("custom_id")
+            if isinstance(custom_id, str):
+                transcript_map[custom_id] = _extract_user_message(record)
+
+    return transcript_map
+
+
 def _join_evidence(value: Any) -> str:
     if not isinstance(value, list):
         return ""
@@ -148,18 +181,21 @@ def flatten_output_record(record: dict[str, Any]) -> dict[str, Any]:
 def export_results_csv(
     experiment_path: str | Path,
     test_mode: bool = False,
+    include_transcript: bool = False,
     output_path: str | Path | None = None,
 ) -> Path:
     """Export batch JSONL outputs for an experiment into a flat CSV file."""
     experiment = load_experiment_config(experiment_path)
     run_dir = _run_dir_for(experiment.name, test_mode=test_mode)
     input_path = run_dir / "output.jsonl"
+    input_jsonl_path = run_dir / "input.jsonl"
 
     if not input_path.exists():
         raise FileNotFoundError(f"Output file not found: {input_path}")
 
     resolved_output_path = Path(output_path) if output_path is not None else run_dir / "results.csv"
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+    transcript_map = _load_transcript_map(input_jsonl_path) if include_transcript else {}
 
     rows: list[dict[str, Any]] = []
     with input_path.open("r", encoding="utf-8") as f:
@@ -171,47 +207,57 @@ def export_results_csv(
             try:
                 record = json.loads(stripped)
             except json.JSONDecodeError as exc:
-                rows.append(
-                    {
-                        "transcript_id": "",
-                        "response_status_code": "",
-                        "response_id": "",
-                        "model": "",
-                        "summary": "",
-                        "parse_error": f"Invalid JSONL row at line {line_number}: {exc}",
-                        "raw_output_text": stripped,
-                        "error": "",
-                        "response_error": "",
-                        "input_tokens": "",
-                        "output_tokens": "",
-                        "total_tokens": "",
-                        "reasoning_tokens": "",
-                        **{
-                            f"{mechanism_key}_{suffix}": ""
-                            for mechanism_key in MECHANISM_KEYS
-                            for suffix in ("level", "form", "rationale", "evidence")
-                        },
-                    }
-                )
+                bad_row = {
+                    "transcript_id": "",
+                    "response_status_code": "",
+                    "response_id": "",
+                    "model": "",
+                    "summary": "",
+                    "parse_error": f"Invalid JSONL row at line {line_number}: {exc}",
+                    "raw_output_text": stripped,
+                    "error": "",
+                    "response_error": "",
+                    "input_tokens": "",
+                    "output_tokens": "",
+                    "total_tokens": "",
+                    "reasoning_tokens": "",
+                    **{
+                        f"{mechanism_key}_{suffix}": ""
+                        for mechanism_key in MECHANISM_KEYS
+                        for suffix in ("level", "form", "rationale", "evidence")
+                    },
+                }
+                if include_transcript:
+                    bad_row["transcript"] = ""
+                rows.append(bad_row)
                 continue
 
-            rows.append(flatten_output_record(record))
+            row = flatten_output_record(record)
+            if include_transcript:
+                row["transcript"] = transcript_map.get(row["transcript_id"], "")
+            rows.append(row)
 
     fieldnames = [
         "transcript_id",
-        "response_status_code",
-        "response_id",
-        "model",
-        "summary",
-        "parse_error",
-        "raw_output_text",
-        "error",
-        "response_error",
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-        "reasoning_tokens",
     ]
+    if include_transcript:
+        fieldnames.append("transcript")
+    fieldnames.extend(
+        [
+            "response_status_code",
+            "response_id",
+            "model",
+            "summary",
+            "parse_error",
+            "raw_output_text",
+            "error",
+            "response_error",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "reasoning_tokens",
+        ]
+    )
     for mechanism_key in MECHANISM_KEYS:
         fieldnames.extend(
             [

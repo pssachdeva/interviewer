@@ -118,7 +118,11 @@ def test_collect_cli_non_terminal(monkeypatch, capsys) -> None:
         csv_path=None,
     )
 
-    monkeypatch.setattr(module, "collect_experiment", lambda _, test_mode=False: fake_result)
+    monkeypatch.setattr(
+        module,
+        "collect_experiment",
+        lambda _, test_mode=False, include_transcript=False: fake_result,
+    )
 
     rc = module.main(["experiments/example_openai_batch.yaml"])
     captured = capsys.readouterr()
@@ -131,7 +135,7 @@ def test_collect_cli_non_terminal(monkeypatch, capsys) -> None:
 def test_collect_cli_test_flag_passes_through(monkeypatch, capsys) -> None:
     module = _load_module(REPO_ROOT / "scripts" / "collect_batch_results.py", "collect_cli_2")
 
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, bool]] = []
 
     manifest = RunManifest(
         experiment_name="exp",
@@ -160,15 +164,15 @@ def test_collect_cli_test_flag_passes_through(monkeypatch, capsys) -> None:
         csv_path=Path("outputs/runs/exp__test/results.csv"),
     )
 
-    def _fake_collect(experiment, test_mode=False):
-        calls.append((str(experiment), test_mode))
+    def _fake_collect(experiment, test_mode=False, include_transcript=False):
+        calls.append((str(experiment), test_mode, include_transcript))
         return fake_result
 
     monkeypatch.setattr(module, "collect_experiment", _fake_collect)
 
-    rc = module.main(["--test", "experiments/exp0.0.yaml"])
+    rc = module.main(["--test", "--include-transcript", "experiments/exp0.0.yaml"])
     captured = capsys.readouterr()
 
     assert rc == 0
-    assert calls == [("experiments/exp0.0.yaml", True)]
+    assert calls == [("experiments/exp0.0.yaml", True, True)]
     assert "CSV file:" in captured.out
