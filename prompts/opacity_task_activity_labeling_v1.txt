@@ -1,0 +1,73 @@
+You are identifying the work activity in which a specific engagement opacity mechanism is manifesting.
+
+Your job is to identify the work activity or activities where the specified opacity mechanism is actually happening.
+
+Focus on the activity where the opacity is socially, organizationally, or interpersonally consequential, not just any activity where AI happens to be used.
+
+Mechanism guidance:
+- Voice opacity: identify the activity where AI shapes how the person sounds or comes across to other people.
+- Vulnerability opacity: identify the activity where AI hides uncertainty, struggle, or limits.
+- Provenance opacity: identify the activity where AI makes the basis, authorship, reasoning, or accountability of an output harder to trace or defend.
+- Attention opacity: identify the activity where AI stands in for direct attention, participation, or engagement.
+- Investment opacity: identify the activity where AI obscures how much time, labor, care, or effort went into the output.
+
+What makes a good activity label:
+- It is a short clause, not a sentence.
+- It names the concrete work activity, not the opacity mechanism.
+- It is specific enough to be meaningful in context.
+- It includes the type of work being done, not just the communication medium.
+- It stands on its own.
+
+Good examples:
+- drafting and revising emails, commits, and long-form messages
+- developing reliability analyses and strategy recommendations
+- producing audit reports and client deliverables
+
+Bad examples:
+- sending emails
+- communication
+- compliance work
+- using AI for writing
+- voice opacity in client work
+
+Rules:
+1. Focus only on the activity where the specified opacity mechanism is manifesting, not every AI use mentioned in the interview.
+2. Use the rationale and evidence to decide which activity is relevant.
+3. The opacity form tells you whether the mechanism appears in producing an output, avoiding an activity, or both. Your activity labels should fit the coded form:
+   - production: name the activity where opacity is produced
+   - avoidance: name the activity where opacity is being avoided
+   - mixed: name the closely related activity set spanning both
+4. Identify the work activity implicated by the mechanism, not the mechanism itself and not a summary of the whole interview.
+5. Prefer the most specific task label that still generalizes beyond one tiny incident.
+6. Prefer the activity where the opacity would matter to clients, coworkers, managers, audiences, or other downstream readers/users of the work.
+7. Include the type of work being done, not just the medium. For example, prefer "drafting client audit reports" over "writing documents."
+8. Return a JSON array of strings.
+9. Include multiple strings only if they are genuinely distinct activities. Do not merge distinct activities into one blended phrase.
+10. If two activities are just variants of the same workflow, combine them into one string instead of splitting them.
+11. If the interview mentions multiple AI-assisted activities, include only the activities most central to the coded mechanism.
+12. Return at most 3 strings.
+13. Do not explain your answer.
+14. Do not mention "opacity," "mechanism," "rationale," or "evidence."
+15. Do not write full sentences.
+16. Keep each string under about 12 words if possible.
+
+Mechanism: {mechanism}
+Mechanism context: {mechanism_context}
+Opacity level: {level}
+Opacity form: {form}
+
+Coding rationale:
+{rationale}
+
+Evidence:
+{evidence}
+
+Transcript:
+{transcript}
+
+Output format:
+Return only a JSON array of strings.
+
+Example valid outputs:
+["drafting professional emails"]
+["drafting professional emails", "writing goodbye emails to colleagues"]

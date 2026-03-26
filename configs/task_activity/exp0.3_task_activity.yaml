@@ -1,0 +1,12 @@
+name: exp0.3_task_activity
+provider: openai
+task_type: task_activity
+model: gpt-5.4
+prompt_file: prompts/opacity_task_activity_labeling_v1.txt
+source_results_csv: outputs/runs/exp0.3/results.csv
+levels:
+  - potential
+  - clear
+reasoning_effort: medium
+request:
+  max_output_tokens: 200

@@ -1,10 +1,11 @@
+import json
 from pathlib import Path
 
-import json
 import pandas as pd
 import pytest
 
 from interviewer.batch import orchestrator
+from interviewer.batch import tasks as batch_tasks
 from interviewer.batch.models import ProviderBatchStatus, ProviderSubmission
 
 
@@ -65,8 +66,12 @@ class _FakeProvider:
                                                         "vulnerability_opacity": {
                                                             "level": "potential",
                                                             "form": "production",
-                                                            "evidence": ["Uses AI when stuck."],
-                                                            "rationale": "Masks uncertainty.",
+                                                            "evidence": [
+                                                                "Uses AI when stuck."
+                                                            ],
+                                                            "rationale": (
+                                                                "Masks uncertainty."
+                                                            ),
                                                         },
                                                         "provenance_opacity": {
                                                             "level": "none",
@@ -152,7 +157,11 @@ def test_submit_and_collect_terminal(tmp_path: Path, monkeypatch) -> None:
 
     fake_provider = _FakeProvider()
     monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
-    monkeypatch.setattr(orchestrator, "load_interviews", lambda split=None: _fake_interviews())
+    monkeypatch.setattr(
+        batch_tasks,
+        "load_interviews",
+        lambda split=None: _fake_interviews(),
+    )
     monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: fake_provider)
 
     manifest = orchestrator.submit_experiment(exp_path)
@@ -174,8 +183,10 @@ def test_submit_and_collect_terminal(tmp_path: Path, monkeypatch) -> None:
     assert collect_result.is_terminal
     assert collect_result.output_path is not None
     assert collect_result.error_path is not None
-    assert '"custom_id": "work_0000"' in collect_result.output_path.read_text(encoding="utf-8")
-    assert collect_result.error_path.read_text(encoding="utf-8") == "file-err-123-content\n"
+    output_text = collect_result.output_path.read_text(encoding="utf-8")
+    assert '"custom_id": "work_0000"' in output_text
+    error_text = collect_result.error_path.read_text(encoding="utf-8")
+    assert error_text == "file-err-123-content\n"
     assert collect_result.csv_path is not None
     assert collect_result.csv_path.name == "results.csv"
     assert collect_result.csv_path.exists()
@@ -191,7 +202,11 @@ def test_submit_blocks_duplicate_run(tmp_path: Path, monkeypatch) -> None:
     exp_path = _write_experiment(tmp_path, prompt_path)
 
     monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
-    monkeypatch.setattr(orchestrator, "load_interviews", lambda split=None: _fake_interviews())
+    monkeypatch.setattr(
+        batch_tasks,
+        "load_interviews",
+        lambda split=None: _fake_interviews(),
+    )
     monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: _FakeProvider())
 
     orchestrator.submit_experiment(exp_path)
@@ -215,7 +230,11 @@ def test_submit_test_mode_uses_first_25_and_separate_run_dir(
     )
 
     monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
-    monkeypatch.setattr(orchestrator, "load_interviews", lambda split=None: interviews_df)
+    monkeypatch.setattr(
+        batch_tasks,
+        "load_interviews",
+        lambda split=None: interviews_df,
+    )
     monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: _FakeProvider())
 
     manifest = orchestrator.submit_experiment(exp_path, test_mode=True)
@@ -235,7 +254,11 @@ def test_collect_non_terminal_does_not_download(tmp_path: Path, monkeypatch) -> 
     exp_path = _write_experiment(tmp_path, prompt_path)
 
     monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
-    monkeypatch.setattr(orchestrator, "load_interviews", lambda split=None: _fake_interviews())
+    monkeypatch.setattr(
+        batch_tasks,
+        "load_interviews",
+        lambda split=None: _fake_interviews(),
+    )
 
     submit_provider = _FakeProvider()
     in_progress_provider = _FakeInProgressProvider()
@@ -243,7 +266,11 @@ def test_collect_non_terminal_does_not_download(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: submit_provider)
     orchestrator.submit_experiment(exp_path)
 
-    monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: in_progress_provider)
+    monkeypatch.setattr(
+        orchestrator,
+        "_provider_for",
+        lambda provider: in_progress_provider,
+    )
     result = orchestrator.collect_experiment(exp_path)
 
     assert not result.is_terminal
@@ -260,7 +287,11 @@ def test_collect_test_mode_uses_test_run_dir(tmp_path: Path, monkeypatch) -> Non
     exp_path = _write_experiment(tmp_path, prompt_path)
 
     monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
-    monkeypatch.setattr(orchestrator, "load_interviews", lambda split=None: _fake_interviews())
+    monkeypatch.setattr(
+        batch_tasks,
+        "load_interviews",
+        lambda split=None: _fake_interviews(),
+    )
 
     submit_provider = _FakeProvider()
     monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: submit_provider)
@@ -272,3 +303,75 @@ def test_collect_test_mode_uses_test_run_dir(tmp_path: Path, monkeypatch) -> Non
 
     assert result.manifest.run_dir == manifest.run_dir
     assert Path(result.manifest.run_dir).name == "unit-exp__test"
+
+
+def test_submit_task_activity_uses_derived_rows(tmp_path: Path, monkeypatch) -> None:
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text(
+        "Mechanism: {mechanism}\n"
+        "Context: {mechanism_context}\n"
+        "Transcript: {transcript}\n"
+        "Rationale: {rationale}\nEvidence: {evidence}\n",
+        encoding="utf-8",
+    )
+    results_path = tmp_path / "results.csv"
+    results_path.write_text(
+        "\n".join(
+            [
+                (
+                    "transcript_id,transcript,voice_opacity_level,"
+                    "voice_opacity_form,voice_opacity_rationale,"
+                    "voice_opacity_evidence,vulnerability_opacity_level,"
+                    "vulnerability_opacity_form,vulnerability_opacity_rationale,"
+                    "vulnerability_opacity_evidence"
+                ),
+                (
+                    "work_0000,Transcript zero,potential,production,"
+                    "Voice rationale,Voice evidence,none,none,,"
+                ),
+                (
+                    "work_0001,Transcript one,none,none,,,clear,mixed,"
+                    "Vuln rationale,Vuln evidence"
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    exp_path = tmp_path / "task-activity.yaml"
+    exp_path.write_text(
+        "\n".join(
+            [
+                "name: task-activity-exp",
+                "provider: openai",
+                "task_type: task_activity",
+                "model: gpt-5.4",
+                f"prompt_file: {prompt_path}",
+                f"source_results_csv: {results_path}",
+                "levels:",
+                "  - potential",
+                "  - clear",
+                "mechanisms:",
+                "  - voice_opacity",
+                "  - vulnerability_opacity",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    fake_provider = _FakeProvider()
+    monkeypatch.setattr(orchestrator, "RUNS_ROOT", tmp_path / "outputs" / "runs")
+    monkeypatch.setattr(orchestrator, "_provider_for", lambda provider: fake_provider)
+
+    manifest = orchestrator.submit_experiment(exp_path)
+    run_dir = Path(manifest.run_dir)
+    input_lines = (run_dir / "input.jsonl").read_text(encoding="utf-8").splitlines()
+    lines = [json.loads(line) for line in input_lines]
+
+    assert manifest.transcript_count == 2
+    assert [line["custom_id"] for line in lines] == [
+        "work_0000__voice_opacity",
+        "work_0001__vulnerability_opacity",
+    ]
+    assert "Transcript zero" in lines[0]["body"]["input"][1]["content"]
+    assert lines[0]["body"]["input"][0]["content"] == ""

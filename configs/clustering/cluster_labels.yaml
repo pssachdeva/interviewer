@@ -1,0 +1,10 @@
+name: cluster_labels_v1
+provider: openai
+model: gpt-5.4
+prompt_file: prompts/clustering/cluster_phrase_label.txt
+reasoning_effort: medium
+input_root: outputs/opacity_rationale_clustering
+text_source: rationale
+samples_per_cluster: 12
+request:
+  max_output_tokens: 200
