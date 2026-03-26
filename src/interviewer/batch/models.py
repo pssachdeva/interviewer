@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 TERMINAL_BATCH_STATUSES = {"completed", "failed", "expired", "cancelled", "canceled"}
 
 
@@ -18,7 +17,11 @@ class ExperimentConfig:
     provider: str
     model: str
     prompt_file: Path
+    task_type: str = "opacity_coding"
     reasoning_effort: str | None = None
+    source_results_csv: Path | None = None
+    mechanisms: list[str] | None = None
+    levels: list[str] | None = None
     request: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None

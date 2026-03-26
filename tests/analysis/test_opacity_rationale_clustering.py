@@ -11,7 +11,7 @@ from interviewer.analysis.opacity_rationale_clustering import (
 )
 
 
-def test_expand_opacity_rationales_includes_none_levels_by_default() -> None:
+def test_expand_opacity_rationales_excludes_none_levels_by_default() -> None:
     results = pd.DataFrame(
         [
             {
@@ -51,17 +51,47 @@ def test_expand_opacity_rationales_includes_none_levels_by_default() -> None:
     assert expanded["row_id"].tolist() == [
         "work_1:voice_opacity",
         "work_2:voice_opacity",
-        "work_1:vulnerability_opacity",
         "work_2:vulnerability_opacity",
     ]
     assert expanded["mechanism_label"].tolist() == [
         "Voice",
         "Voice",
         "Vulnerability",
-        "Vulnerability",
     ]
-    assert expanded["level"].tolist() == ["potential", "clear", "none", "potential"]
+    assert expanded["level"].tolist() == ["potential", "clear", "potential"]
     assert expanded["embedding_input"].tolist() == expanded["rationale"].tolist()
+    assert expanded["embedding_text_source"].tolist() == ["rationale", "rationale", "rationale"]
+
+
+def test_expand_opacity_rationales_can_embed_evidence() -> None:
+    results = pd.DataFrame(
+        [
+            {
+                "transcript_id": "work_1",
+                "voice_opacity_level": "potential",
+                "voice_opacity_form": "production",
+                "voice_opacity_rationale": "AI smooths over how the speaker actually sounds.",
+                "voice_opacity_evidence": "Quote one || Quote two",
+            },
+            {
+                "transcript_id": "work_2",
+                "voice_opacity_level": "clear",
+                "voice_opacity_form": "avoidance",
+                "voice_opacity_rationale": "The speaker avoids AI in sensitive writing.",
+                "voice_opacity_evidence": "",
+            },
+        ]
+    )
+
+    expanded = expand_opacity_rationales(
+        results,
+        mechanisms=["voice_opacity"],
+        text_source="evidence",
+    )
+
+    assert expanded["row_id"].tolist() == ["work_1:voice_opacity"]
+    assert expanded["embedding_input"].tolist() == ["Quote one [SEP] Quote two"]
+    assert expanded["embedding_text_source"].tolist() == ["evidence"]
 
 
 def test_top_terms_ignores_common_words() -> None:
@@ -160,7 +190,7 @@ def test_run_analysis_by_mechanism_uses_separate_output_dirs(monkeypatch, tmp_pa
         "results.csv",
         output_dir=tmp_path,
         mechanisms=["voice_opacity", "attention_opacity"],
-        levels=["none", "potential", "clear"],
+        levels=["potential", "clear"],
     )
 
     assert sorted(artifacts) == ["attention_opacity", "voice_opacity"]
@@ -172,7 +202,7 @@ def test_run_analysis_by_mechanism_uses_separate_output_dirs(monkeypatch, tmp_pa
         tmp_path / "voice_opacity",
         tmp_path / "attention_opacity",
     ]
-    assert [call["n_clusters"] for call in calls] == [7, 6]
+    assert [call["n_clusters"] for call in calls] == [10, 10]
 
 
 def test_run_analysis_by_mechanism_respects_global_cluster_override(

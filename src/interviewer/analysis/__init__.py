@@ -2,7 +2,7 @@
 
 from .opacity_rationale_clustering import (
     AnalysisArtifacts,
-    DEFAULT_CLUSTERS_BY_MECHANISM,
+    TEXT_SOURCES,
     build_cluster_summary,
     build_plot,
     embed_texts,
@@ -14,7 +14,7 @@ from .opacity_rationale_clustering import (
 
 __all__ = [
     "AnalysisArtifacts",
-    "DEFAULT_CLUSTERS_BY_MECHANISM",
+    "TEXT_SOURCES",
     "build_cluster_summary",
     "build_plot",
     "embed_texts",

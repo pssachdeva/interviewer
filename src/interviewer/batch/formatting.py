@@ -43,16 +43,35 @@ def build_batch_line(
     model: str,
     reasoning_effort: str | None = None,
     request_overrides: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    ) -> dict[str, Any]:
     """Build one JSONL line for OpenAI Batch API."""
+    return build_batch_line_from_messages(
+        custom_id=transcript_id,
+        system_prompt=system_prompt,
+        user_message=transcript_text,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        request_overrides=request_overrides,
+    )
+
+
+def build_batch_line_from_messages(
+    custom_id: str,
+    system_prompt: str,
+    user_message: str,
+    model: str,
+    reasoning_effort: str | None = None,
+    request_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one JSONL line from arbitrary system and user messages."""
     return {
-        "custom_id": transcript_id,
+        "custom_id": custom_id,
         "method": "POST",
         "url": BATCH_ENDPOINT,
         "body": build_request_body(
             model=model,
             system_prompt=system_prompt,
-            user_message=transcript_text,
+            user_message=user_message,
             reasoning_effort=reasoning_effort,
             request_overrides=request_overrides,
         ),

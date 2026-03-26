@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 MECHANISM_KEYS = [
     "voice_opacity",
     "vulnerability_opacity",
@@ -47,4 +46,20 @@ OPACITY_RESULTS_COLUMNS = [
     column
     for mechanism in MECHANISM_KEYS
     for column in mechanism_columns(mechanism)
+]
+
+BASE_RESULTS_COLUMNS = [
+    "transcript_id",
+    "response_status_code",
+    "response_id",
+    "model",
+    "summary",
+    "parse_error",
+    "raw_output_text",
+    "error",
+    "response_error",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "reasoning_tokens",
 ]

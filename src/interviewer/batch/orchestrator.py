@@ -9,24 +9,20 @@ from pathlib import Path
 from typing import Any
 
 from interviewer.batch.config import load_experiment_config
-from interviewer.batch.formatting import iter_batch_lines, write_jsonl
+from interviewer.batch.formatting import write_jsonl
 from interviewer.batch.models import (
+    TERMINAL_BATCH_STATUSES,
     CollectResult,
     ProviderBatchStatus,
     RunContext,
     RunManifest,
-    TERMINAL_BATCH_STATUSES,
 )
 from interviewer.batch.providers.base import ProviderClient
 from interviewer.batch.providers.openai_provider import OpenAIProvider
-from interviewer.data import load_interviews
-
+from interviewer.batch.tasks import get_task_adapter
 
 RUNS_ROOT = Path("outputs") / "runs"
 MANIFEST_FILENAME = "manifest.json"
-TEST_TRANSCRIPT_LIMIT = 25
-
-
 def _now_utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -77,23 +73,19 @@ def submit_experiment(path: str | Path, test_mode: bool = False) -> RunManifest:
     manifest_path = run_dir / MANIFEST_FILENAME
     if run_dir.exists():
         raise FileExistsError(
-            f"Run directory already exists for experiment `{experiment.name}`: {run_dir}"
+            "Run directory already exists for experiment "
+            f"`{experiment.name}`: {run_dir}"
         )
 
     run_dir.mkdir(parents=True, exist_ok=False)
 
     prompt_text = experiment.prompt_file.read_text(encoding="utf-8")
-    interviews_df = load_interviews()
-    if test_mode:
-        interviews_df = interviews_df.head(TEST_TRANSCRIPT_LIMIT).copy()
-
+    task_adapter = get_task_adapter(experiment.task_type)
     input_path = run_dir / "input.jsonl"
-    rows = iter_batch_lines(
-        interviews_df=interviews_df,
-        system_prompt=prompt_text,
-        model=experiment.model,
-        reasoning_effort=experiment.reasoning_effort,
-        request_overrides=experiment.request,
+    rows, item_count = task_adapter.build_batch_rows(
+        experiment=experiment,
+        prompt_text=prompt_text,
+        test_mode=test_mode,
     )
     write_jsonl(input_path, rows)
 
@@ -109,7 +101,7 @@ def submit_experiment(path: str | Path, test_mode: bool = False) -> RunManifest:
         run_dir=str(run_dir.resolve()),
         input_jsonl_path=str(input_path.resolve()),
         test_mode=test_mode,
-        transcript_count=len(interviews_df),
+        transcript_count=item_count,
         status="prepared",
     )
     _write_manifest(manifest_path, manifest)
@@ -141,7 +133,8 @@ def collect_experiment(
 
     if not manifest_path.exists():
         raise FileNotFoundError(
-            f"Run manifest not found for experiment `{experiment.name}`: {manifest_path}"
+            "Run manifest not found for experiment "
+            f"`{experiment.name}`: {manifest_path}"
         )
 
     manifest = _read_manifest(manifest_path)
@@ -181,7 +174,6 @@ def collect_experiment(
 
         existing_output_path = run_dir / "output.jsonl"
         if existing_output_path.exists():
-            # Local import avoids a circular dependency with the export module.
             from interviewer.batch.export import export_results_csv
 
             csv_path = export_results_csv(

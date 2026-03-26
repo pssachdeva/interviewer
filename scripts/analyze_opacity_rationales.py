@@ -13,9 +13,10 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from interviewer.analysis.opacity_rationale_clustering import (
-    DEFAULT_CLUSTERS_BY_MECHANISM,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_LEVELS,
+    DEFAULT_N_CLUSTERS,
+    TEXT_SOURCES,
     run_opacity_rationale_analysis_by_mechanism,
 )
 from interviewer.opacity_columns import FORMS, LEVELS, MECHANISM_KEYS
@@ -50,7 +51,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="levels",
         action="append",
         choices=sorted(LEVELS),
-        help="Restrict analysis to one or more levels. Defaults to all levels, including none.",
+        help="Restrict analysis to one or more levels. Defaults to potential+clear.",
     )
     parser.add_argument(
         "--form",
@@ -64,6 +65,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Randomly sample this many rationale rows after filtering.",
+    )
+    parser.add_argument(
+        "--text-source",
+        choices=TEXT_SOURCES,
+        default="rationale",
+        help=(
+            "Field to embed and cluster on. "
+            "Use `evidence` to cluster on quoted evidence instead of model rationales."
+        ),
     )
     parser.add_argument(
         "--embedding-model",
@@ -87,12 +97,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=(
             "Override the number of k-means clusters for every selected mechanism. "
-            "Defaults to mechanism-specific values: "
-            + ", ".join(
-                f"{mechanism}={count}"
-                for mechanism, count in DEFAULT_CLUSTERS_BY_MECHANISM.items()
-            )
-            + "."
+            f"Defaults to {DEFAULT_N_CLUSTERS}."
         ),
     )
     parser.add_argument(
@@ -132,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             levels=args.levels or DEFAULT_LEVELS,
             forms=args.forms,
             sample_size=args.sample_size,
+            text_source=args.text_source,
             embedding_model=args.embedding_model,
             embedding_batch_size=args.embedding_batch_size,
             embedding_device=args.embedding_device,
