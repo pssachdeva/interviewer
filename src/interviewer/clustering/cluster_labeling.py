@@ -13,8 +13,10 @@ import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
-from interviewer.analysis.opacity_rationale_clustering import TEXT_SOURCES, mechanism_label
-
+from interviewer.analysis.opacity_rationale_clustering import (
+    TEXT_SOURCES,
+    mechanism_label,
+)
 
 MECHANISM_BLURBS = {
     "voice_opacity": (
@@ -45,11 +47,13 @@ ALLOWED_FIELDS = {
     "reasoning_effort",
     "input_root",
     "output_file",
+    "cluster_kind",
     "text_source",
     "samples_per_cluster",
     "request",
 }
 ALLOWED_REASONING_EFFORTS = {"low", "medium", "high"}
+CLUSTER_KINDS = {"rationale", "activity"}
 
 
 @dataclass(slots=True)
@@ -62,6 +66,7 @@ class ClusterLabelConfig:
     prompt_file: Path
     input_root: Path
     output_file: Path
+    cluster_kind: str = "rationale"
     text_source: str = "rationale"
     reasoning_effort: str | None = None
     samples_per_cluster: int = 12
@@ -123,7 +128,10 @@ def load_cluster_label_config(path: str | Path) -> ClusterLabelConfig:
 
     reasoning_effort = raw.get("reasoning_effort")
     if reasoning_effort is not None:
-        if not isinstance(reasoning_effort, str) or reasoning_effort not in ALLOWED_REASONING_EFFORTS:
+        if (
+            not isinstance(reasoning_effort, str)
+            or reasoning_effort not in ALLOWED_REASONING_EFFORTS
+        ):
             allowed = ", ".join(sorted(ALLOWED_REASONING_EFFORTS))
             raise ValueError(f"`reasoning_effort` must be one of: {allowed}")
 
@@ -137,10 +145,17 @@ def load_cluster_label_config(path: str | Path) -> ClusterLabelConfig:
 
     prompt_file = _resolve_path(prompt_file_raw.strip(), resolved)
     input_root = _resolve_path(input_root_raw.strip(), resolved)
+    cluster_kind = raw.get("cluster_kind", "rationale")
+    if not isinstance(cluster_kind, str) or cluster_kind not in CLUSTER_KINDS:
+        allowed = ", ".join(sorted(CLUSTER_KINDS))
+        raise ValueError(f"`cluster_kind` must be one of: {allowed}")
     text_source = raw.get("text_source", "rationale")
-    if not isinstance(text_source, str) or text_source not in TEXT_SOURCES:
-        allowed = ", ".join(TEXT_SOURCES)
-        raise ValueError(f"`text_source` must be one of: {allowed}")
+    if cluster_kind == "rationale":
+        if not isinstance(text_source, str) or text_source not in TEXT_SOURCES:
+            allowed = ", ".join(TEXT_SOURCES)
+            raise ValueError(f"`text_source` must be one of: {allowed}")
+    else:
+        text_source = "task_activity"
     output_file_raw = raw.get("output_file")
     if output_file_raw is None:
         output_file = input_root / "cluster_labels.csv"
@@ -156,6 +171,7 @@ def load_cluster_label_config(path: str | Path) -> ClusterLabelConfig:
         prompt_file=prompt_file,
         input_root=input_root,
         output_file=output_file,
+        cluster_kind=cluster_kind,
         text_source=text_source,
         reasoning_effort=reasoning_effort,
         samples_per_cluster=samples_per_cluster,
@@ -165,10 +181,23 @@ def load_cluster_label_config(path: str | Path) -> ClusterLabelConfig:
 
 
 def _available_mechanism_dirs(input_root: Path) -> list[Path]:
+    return _available_mechanism_dirs_for(
+        input_root,
+        clustered_filename="clustered_rationales.csv",
+    )
+
+
+def _available_mechanism_dirs_for(
+    input_root: Path,
+    *,
+    clustered_filename: str,
+) -> list[Path]:
     return sorted(
         path
         for path in input_root.iterdir()
-        if path.is_dir() and (path / "clustered_rationales.csv").exists() and (path / "embeddings.npy").exists()
+        if path.is_dir()
+        and (path / clustered_filename).exists()
+        and (path / "embeddings.npy").exists()
     )
 
 
@@ -195,7 +224,8 @@ def _render_representative_snippets(rows: pd.DataFrame, *, text_source: str) -> 
     rendered: list[str] = []
     for index, (_, row) in enumerate(rows.iterrows(), start=1):
         rendered.append(
-            f"{index}. [{row['transcript_id']}] level={row['level']}; form={row['form']}; "
+            f"{index}. [{row['transcript_id']}] "
+            f"level={row['level']}; form={row['form']}; "
             f"{text_source}={row[text_source]}"
         )
     return "\n".join(rendered)
@@ -204,12 +234,22 @@ def _render_representative_snippets(rows: pd.DataFrame, *, text_source: str) -> 
 def snippet_source_label(text_source: str) -> str:
     if text_source == "evidence":
         return "Quoted evidence excerpts selected for the mechanism"
+    if text_source == "task_activity":
+        return "Short task-activity clauses assigned to the mechanism"
     return "Model-written coding rationales for the mechanism"
 
 
 def build_cluster_label_rows(config: ClusterLabelConfig) -> pd.DataFrame:
     """Prepare one row per mechanism/cluster for downstream labeling."""
-    mechanism_dirs = _available_mechanism_dirs(config.input_root)
+    clustered_filename = (
+        "clustered_activities.csv"
+        if config.cluster_kind == "activity"
+        else "clustered_rationales.csv"
+    )
+    mechanism_dirs = _available_mechanism_dirs_for(
+        config.input_root,
+        clustered_filename=clustered_filename,
+    )
     if not mechanism_dirs:
         raise FileNotFoundError(
             f"No clustering artifacts found under {config.input_root}."
@@ -218,7 +258,7 @@ def build_cluster_label_rows(config: ClusterLabelConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for mechanism_dir in mechanism_dirs:
         mechanism = mechanism_dir.name
-        points = pd.read_csv(mechanism_dir / "clustered_rationales.csv")
+        points = pd.read_csv(mechanism_dir / clustered_filename)
         embeddings = np.load(mechanism_dir / "embeddings.npy")
         if len(points) != len(embeddings):
             raise ValueError(
@@ -256,7 +296,9 @@ def build_cluster_label_rows(config: ClusterLabelConfig) -> pd.DataFrame:
                 }
             )
 
-    return pd.DataFrame(rows).sort_values(["mechanism", "cluster_id"]).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values(
+        ["mechanism", "cluster_id"]
+    ).reset_index(drop=True)
 
 
 def _extract_response_text(response: Any) -> str:
@@ -365,7 +407,11 @@ def label_clusters(config: ClusterLabelConfig) -> pd.DataFrame:
                     {"role": "system", "content": prompt_text},
                     {"role": "user", "content": "Provide the cluster label."},
                 ],
-                reasoning={"effort": config.reasoning_effort} if config.reasoning_effort else None,
+                reasoning=(
+                    {"effort": config.reasoning_effort}
+                    if config.reasoning_effort
+                    else None
+                ),
                 **request_kwargs,
             )
             raw_text = _extract_response_text(response)
@@ -374,14 +420,20 @@ def label_clusters(config: ClusterLabelConfig) -> pd.DataFrame:
                     **base_output,
                     "cluster_label_phrase": _label_only(raw_text),
                     "raw_output_text": raw_text,
-                    "response_json": json.dumps(response.model_dump(), ensure_ascii=False),
+                    "response_json": json.dumps(
+                        response.model_dump(),
+                        ensure_ascii=False,
+                    ),
                 }
             )
         except Exception as exc:
             response_json = ""
             if response is not None:
                 try:
-                    response_json = json.dumps(response.model_dump(), ensure_ascii=False)
+                    response_json = json.dumps(
+                        response.model_dump(),
+                        ensure_ascii=False,
+                    )
                 except Exception:
                     response_json = ""
             output_rows.append(

@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,6 @@ from interviewer.opacity_columns import (
     level_column,
     rationale_column,
 )
-
 
 DEFAULT_LEVELS = ("potential", "clear")
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
@@ -117,6 +116,18 @@ class AnalysisArtifacts:
     params_path: Path
 
 
+@dataclass(frozen=True)
+class TaskActivityAnalysisArtifacts:
+    """Paths written by one task-activity clustering run."""
+
+    activity_rows_path: Path
+    embeddings_path: Path
+    clustered_points_path: Path
+    cluster_summary_path: Path
+    figure_path: Path
+    params_path: Path
+
+
 def load_results_csv(path: str | Path) -> pd.DataFrame:
     """Load an exported opacity results CSV."""
     return pd.read_csv(path)
@@ -137,6 +148,37 @@ def normalize_evidence(value: str) -> str:
     parts = [part.strip() for part in str(value).split("||")]
     parts = [part for part in parts if part]
     return " [SEP] ".join(parts)
+
+
+def parse_task_activities(value: object) -> list[str]:
+    """Parse a task-activities cell into a normalized list of strings."""
+    if value is None or pd.isna(value):
+        return []
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = text
+
+    if isinstance(payload, str):
+        normalized = normalize_text(payload)
+        return [normalized] if normalized else []
+
+    if not isinstance(payload, list):
+        raise ValueError("`task_activities` values must be JSON arrays or strings.")
+
+    activities: list[str] = []
+    for item in payload:
+        if not isinstance(item, str):
+            raise ValueError("`task_activities` arrays must contain only strings.")
+        normalized = normalize_text(item)
+        if normalized:
+            activities.append(normalized)
+    return activities
 
 
 def expand_opacity_rationales(
@@ -179,7 +221,9 @@ def expand_opacity_rationales(
         ]
         missing = [column for column in required if column not in results.columns]
         if missing:
-            raise ValueError(f"Results CSV is missing columns for {mechanism}: {missing}")
+            raise ValueError(
+                f"Results CSV is missing columns for {mechanism}: {missing}"
+            )
 
         mechanism_df = results[base_columns].copy()
         mechanism_df["mechanism"] = mechanism
@@ -192,7 +236,9 @@ def expand_opacity_rationales(
         mechanism_df["evidence"] = (
             results[evidence_column(mechanism)].fillna("").map(normalize_evidence)
         )
-        mechanism_df["row_id"] = mechanism_df["transcript_id"].astype(str) + ":" + mechanism
+        mechanism_df["row_id"] = (
+            mechanism_df["transcript_id"].astype(str) + ":" + mechanism
+        )
         frames.append(mechanism_df)
 
     long_df = pd.concat(frames, ignore_index=True)
@@ -205,6 +251,76 @@ def expand_opacity_rationales(
     filtered["embedding_input"] = filtered[text_source]
     filtered["embedding_text_source"] = text_source
     return filtered
+
+
+def expand_task_activity_results(
+    results: pd.DataFrame,
+    *,
+    mechanisms: Sequence[str] | None = None,
+    levels: Sequence[str] | None = None,
+    forms: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Explode task-activity results into one row per activity string."""
+    required = {"transcript_id", "mechanism", "level", "form", "task_activities"}
+    missing = sorted(required - set(results.columns))
+    if missing:
+        raise ValueError(f"Task-activity results CSV is missing columns: {missing}")
+
+    selected_mechanisms = tuple(mechanisms or MECHANISM_KEYS)
+    invalid_mechanisms = sorted(set(selected_mechanisms) - set(MECHANISM_KEYS))
+    if invalid_mechanisms:
+        raise ValueError(f"Unsupported mechanisms: {invalid_mechanisms}")
+
+    selected_levels = tuple(levels or DEFAULT_LEVELS)
+    invalid_levels = sorted(set(selected_levels) - LEVELS)
+    if invalid_levels:
+        raise ValueError(f"Unsupported levels: {invalid_levels}")
+
+    selected_forms = tuple(forms) if forms is not None else None
+    if selected_forms is not None:
+        invalid_forms = sorted(set(selected_forms) - FORMS)
+        if invalid_forms:
+            raise ValueError(f"Unsupported forms: {invalid_forms}")
+
+    base_columns = [
+        column
+        for column in ("transcript_id", "transcript", "mechanism", "level", "form")
+        if column in results.columns
+    ]
+
+    filtered = results.loc[
+        results["mechanism"].isin(selected_mechanisms)
+        & results["level"].isin(selected_levels)
+    ].copy()
+    if selected_forms is not None:
+        filtered = filtered.loc[filtered["form"].isin(selected_forms)].copy()
+
+    rows: list[dict[str, object]] = []
+    for _, row in filtered.iterrows():
+        activities = parse_task_activities(row["task_activities"])
+        for activity_index, activity in enumerate(activities):
+            exploded: dict[str, object] = {
+                column: row[column] for column in base_columns
+            }
+            mechanism = str(row["mechanism"])
+            transcript_id = str(row["transcript_id"])
+            exploded["mechanism_label"] = mechanism_label(mechanism)
+            exploded["activity_index"] = activity_index
+            exploded["task_activity"] = activity
+            exploded["row_id"] = f"{transcript_id}:{mechanism}:{activity_index}"
+            exploded["embedding_input"] = activity
+            exploded["embedding_text_source"] = "task_activity"
+            rows.append(exploded)
+
+    expected_columns = base_columns + [
+        "mechanism_label",
+        "activity_index",
+        "task_activity",
+        "row_id",
+        "embedding_input",
+        "embedding_text_source",
+    ]
+    return pd.DataFrame(rows, columns=expected_columns)
 
 
 def embed_texts(
@@ -305,12 +421,15 @@ def build_cluster_summary(
     embeddings: np.ndarray,
     centers: np.ndarray,
     *,
+    text_column: str = "rationale",
     top_n_terms: int = 8,
     top_n_examples: int = 3,
 ) -> pd.DataFrame:
     """Summarize cluster size, dominant labels, keywords, and exemplars."""
     if len(points) != len(embeddings):
         raise ValueError("`points` and `embeddings` must have matching lengths.")
+    if text_column not in points.columns:
+        raise ValueError(f"`points` is missing text column `{text_column}`.")
 
     rows: list[dict[str, object]] = []
     total = len(points)
@@ -319,9 +438,9 @@ def build_cluster_summary(
         cluster_points = points.loc[cluster_mask].copy()
         cluster_embeddings = embeddings[cluster_mask.to_numpy()]
         distances = np.linalg.norm(cluster_embeddings - centers[cluster_id], axis=1)
-        exemplar_points = cluster_points.assign(distance_to_center=distances).sort_values(
-            "distance_to_center"
-        )
+        exemplar_points = cluster_points.assign(
+            distance_to_center=distances
+        ).sort_values("distance_to_center")
 
         rows.append(
             {
@@ -329,7 +448,9 @@ def build_cluster_summary(
                 "cluster_label": f"C{int(cluster_id):02d}",
                 "size": int(cluster_mask.sum()),
                 "share": float(cluster_mask.sum() / total),
-                "top_terms": ", ".join(top_terms(cluster_points["rationale"], top_n=top_n_terms)),
+                "top_terms": ", ".join(
+                    top_terms(cluster_points[text_column], top_n=top_n_terms)
+                ),
                 "top_mechanisms": _top_categories(cluster_points["mechanism_label"]),
                 "top_levels": _top_categories(cluster_points["level"]),
                 "top_forms": _top_categories(cluster_points["form"]),
@@ -337,22 +458,33 @@ def build_cluster_summary(
                     exemplar_points["transcript_id"].astype(str).head(top_n_examples)
                 ),
                 "example_rationales": " || ".join(
-                    exemplar_points["rationale"].astype(str).head(top_n_examples).map(_truncate)
+                    exemplar_points[text_column]
+                    .astype(str)
+                    .head(top_n_examples)
+                    .map(_truncate)
                 ),
             }
         )
 
     summary = pd.DataFrame(rows)
-    return summary.sort_values(["size", "cluster_id"], ascending=[False, True]).reset_index(
-        drop=True
-    )
+    return summary.sort_values(
+        ["size", "cluster_id"], ascending=[False, True]
+    ).reset_index(drop=True)
 
 
-def build_plot(points: pd.DataFrame, *, title: str):
-    """Create an interactive UMAP scatter plot for clustered rationales."""
+def build_plot(
+    points: pd.DataFrame,
+    *,
+    title: str,
+    text_column: str = "rationale",
+):
+    """Create an interactive UMAP scatter plot for clustered texts."""
     plot_df = points.copy()
+    if text_column not in plot_df.columns:
+        raise ValueError(f"`points` is missing text column `{text_column}`.")
     plot_df["cluster_label"] = plot_df["cluster_id"].map(lambda value: f"C{value:02d}")
-    plot_df["hover_rationale"] = plot_df["rationale"].map(_truncate)
+    hover_column = f"hover_{text_column}"
+    plot_df[hover_column] = plot_df[text_column].map(_truncate)
 
     fig = px.scatter(
         plot_df,
@@ -366,10 +498,10 @@ def build_plot(points: pd.DataFrame, *, title: str):
             "mechanism_label": True,
             "level": True,
             "form": True,
-            "hover_rationale": True,
+            hover_column: True,
             "umap_x": ":.3f",
             "umap_y": ":.3f",
-            "rationale": False,
+            text_column: False,
         },
         title=title,
         width=1200,
@@ -391,7 +523,11 @@ def _load_cached_embeddings(
     embeddings_path = output_dir / "embeddings.npy"
     manifest_path = output_dir / "embedding_manifest.json"
 
-    if not (metadata_path.exists() and embeddings_path.exists() and manifest_path.exists()):
+    if not (
+        metadata_path.exists()
+        and embeddings_path.exists()
+        and manifest_path.exists()
+    ):
         return None
 
     metadata = pd.read_csv(metadata_path, dtype=str).fillna("")
@@ -399,7 +535,9 @@ def _load_cached_embeddings(
         manifest = json.load(f)
 
     cached_pairs = list(zip(metadata["row_id"], metadata["embedding_input"]))
-    current_pairs = list(zip(rationale_rows["row_id"], rationale_rows["embedding_input"]))
+    current_pairs = list(
+        zip(rationale_rows["row_id"], rationale_rows["embedding_input"])
+    )
     if cached_pairs != current_pairs:
         return None
     if manifest.get("model") != model or manifest.get("device") != device:
@@ -427,6 +565,139 @@ def _write_embedding_cache(
     with (output_dir / "embedding_manifest.json").open("w", encoding="utf-8") as f:
         json.dump({"model": model, "device": device}, f, indent=2)
         f.write("\n")
+
+
+def run_task_activity_analysis(
+    results_csv: str | Path,
+    *,
+    output_dir: str | Path,
+    mechanisms: Sequence[str] | None = None,
+    levels: Sequence[str] | None = None,
+    forms: Sequence[str] | None = None,
+    sample_size: int | None = None,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    embedding_batch_size: int = 100,
+    embedding_device: str | None = None,
+    n_clusters: int = DEFAULT_N_CLUSTERS,
+    random_state: int = 7,
+    umap_neighbors: int = 15,
+    umap_min_dist: float = 0.0,
+    force_reembed: bool = False,
+) -> TaskActivityAnalysisArtifacts:
+    """Run the full embedding, clustering, and UMAP pipeline for task activities."""
+    resolved_output_dir = Path(output_dir)
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+
+    results = load_results_csv(results_csv)
+    activity_rows = expand_task_activity_results(
+        results,
+        mechanisms=mechanisms,
+        levels=levels,
+        forms=forms,
+    )
+    if sample_size is not None:
+        activity_rows = activity_rows.sample(
+            n=min(sample_size, len(activity_rows)),
+            random_state=random_state,
+        ).sort_values(["transcript_id", "mechanism", "activity_index"])
+        activity_rows.reset_index(drop=True, inplace=True)
+
+    embeddings: np.ndarray | None = None
+    if not force_reembed:
+        embeddings = _load_cached_embeddings(
+            resolved_output_dir,
+            activity_rows,
+            model=embedding_model,
+            device=embedding_device,
+        )
+
+    if embeddings is None:
+        embeddings = embed_texts(
+            activity_rows["embedding_input"].tolist(),
+            model=embedding_model,
+            batch_size=embedding_batch_size,
+            device=embedding_device,
+        )
+        _write_embedding_cache(
+            resolved_output_dir,
+            activity_rows,
+            embeddings,
+            model=embedding_model,
+            device=embedding_device,
+        )
+
+    labels, centers = fit_kmeans(
+        embeddings,
+        n_clusters=n_clusters,
+        random_state=random_state,
+    )
+    coordinates = project_umap(
+        embeddings,
+        random_state=random_state,
+        n_neighbors=umap_neighbors,
+        min_dist=umap_min_dist,
+    )
+
+    points = activity_rows.copy()
+    points["cluster_id"] = labels
+    points["umap_x"] = coordinates[:, 0]
+    points["umap_y"] = coordinates[:, 1]
+    points["cluster_label"] = points["cluster_id"].map(lambda value: f"C{value:02d}")
+
+    summary = build_cluster_summary(
+        points,
+        embeddings,
+        centers,
+        text_column="task_activity",
+    )
+    title = (
+        f"Task Activity Clusters ({len(points)} activities, "
+        f"{points['cluster_id'].nunique()} clusters)"
+    )
+    figure = build_plot(points, title=title, text_column="task_activity")
+
+    activity_rows_path = resolved_output_dir / "activity_rows.csv"
+    clustered_points_path = resolved_output_dir / "clustered_activities.csv"
+    cluster_summary_path = resolved_output_dir / "cluster_summary.csv"
+    figure_path = resolved_output_dir / "umap_clusters.html"
+    params_path = resolved_output_dir / "analysis_params.json"
+
+    activity_rows.to_csv(activity_rows_path, index=False)
+    points.to_csv(clustered_points_path, index=False)
+    summary.to_csv(cluster_summary_path, index=False)
+    figure.write_html(figure_path, include_plotlyjs="cdn")
+    with params_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "results_csv": str(results_csv),
+                "output_dir": str(resolved_output_dir),
+                "mechanisms": list(mechanisms or MECHANISM_KEYS),
+                "levels": list(levels or DEFAULT_LEVELS),
+                "forms": list(forms) if forms is not None else None,
+                "sample_size": sample_size,
+                "embedding_model": embedding_model,
+                "embedding_batch_size": embedding_batch_size,
+                "embedding_device": embedding_device,
+                "n_clusters": n_clusters,
+                "random_state": random_state,
+                "umap_neighbors": umap_neighbors,
+                "umap_min_dist": umap_min_dist,
+                "force_reembed": force_reembed,
+                "row_count": len(points),
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
+
+    return TaskActivityAnalysisArtifacts(
+        activity_rows_path=activity_rows_path,
+        embeddings_path=resolved_output_dir / "embeddings.npy",
+        clustered_points_path=clustered_points_path,
+        cluster_summary_path=cluster_summary_path,
+        figure_path=figure_path,
+        params_path=params_path,
+    )
 
 
 def run_opacity_rationale_analysis(
@@ -598,6 +869,56 @@ def run_opacity_rationale_analysis_by_mechanism(
             forms=forms,
             sample_size=sample_size,
             text_source=text_source,
+            embedding_model=embedding_model,
+            embedding_batch_size=embedding_batch_size,
+            embedding_device=embedding_device,
+            n_clusters=mechanism_clusters,
+            random_state=random_state,
+            umap_neighbors=umap_neighbors,
+            umap_min_dist=umap_min_dist,
+            force_reembed=force_reembed,
+        )
+
+    return artifacts_by_mechanism
+
+
+def run_task_activity_analysis_by_mechanism(
+    results_csv: str | Path,
+    *,
+    output_dir: str | Path,
+    mechanisms: Sequence[str] | None = None,
+    levels: Sequence[str] | None = None,
+    forms: Sequence[str] | None = None,
+    sample_size: int | None = None,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    embedding_batch_size: int = 100,
+    embedding_device: str | None = None,
+    n_clusters: int | Mapping[str, int] | None = None,
+    random_state: int = 7,
+    umap_neighbors: int = 15,
+    umap_min_dist: float = 0.0,
+    force_reembed: bool = False,
+) -> dict[str, TaskActivityAnalysisArtifacts]:
+    """Run the activity clustering pipeline separately for each mechanism."""
+    selected_mechanisms = tuple(mechanisms or MECHANISM_KEYS)
+    output_root = Path(output_dir)
+    artifacts_by_mechanism: dict[str, TaskActivityAnalysisArtifacts] = {}
+
+    for mechanism in selected_mechanisms:
+        mechanism_dir = output_root / mechanism
+        if isinstance(n_clusters, Mapping):
+            mechanism_clusters = n_clusters.get(mechanism, DEFAULT_N_CLUSTERS)
+        else:
+            mechanism_clusters = (
+                n_clusters if n_clusters is not None else DEFAULT_N_CLUSTERS
+            )
+        artifacts_by_mechanism[mechanism] = run_task_activity_analysis(
+            results_csv,
+            output_dir=mechanism_dir,
+            mechanisms=[mechanism],
+            levels=levels,
+            forms=forms,
+            sample_size=sample_size,
             embedding_model=embedding_model,
             embedding_batch_size=embedding_batch_size,
             embedding_device=embedding_device,

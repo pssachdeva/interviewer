@@ -6,7 +6,9 @@ import pandas as pd
 from interviewer.analysis.opacity_rationale_clustering import (
     build_cluster_summary,
     expand_opacity_rationales,
+    expand_task_activity_results,
     run_opacity_rationale_analysis_by_mechanism,
+    run_task_activity_analysis_by_mechanism,
     top_terms,
 )
 
@@ -20,7 +22,9 @@ def test_expand_opacity_rationales_excludes_none_levels_by_default() -> None:
                 "summary": "s1",
                 "voice_opacity_level": "potential",
                 "voice_opacity_form": "production",
-                "voice_opacity_rationale": "AI smooths over how the speaker actually sounds.",
+                "voice_opacity_rationale": (
+                    "AI smooths over how the speaker actually sounds."
+                ),
                 "voice_opacity_evidence": "e1",
                 "vulnerability_opacity_level": "none",
                 "vulnerability_opacity_form": "none",
@@ -33,11 +37,15 @@ def test_expand_opacity_rationales_excludes_none_levels_by_default() -> None:
                 "summary": "s2",
                 "voice_opacity_level": "clear",
                 "voice_opacity_form": "avoidance",
-                "voice_opacity_rationale": "The speaker avoids AI in sensitive writing.",
+                "voice_opacity_rationale": (
+                    "The speaker avoids AI in sensitive writing."
+                ),
                 "voice_opacity_evidence": "e2",
                 "vulnerability_opacity_level": "potential",
                 "vulnerability_opacity_form": "production",
-                "vulnerability_opacity_rationale": "AI helps hide uncertainty from clients.",
+                "vulnerability_opacity_rationale": (
+                    "AI helps hide uncertainty from clients."
+                ),
                 "vulnerability_opacity_evidence": "e3",
             },
         ]
@@ -60,7 +68,11 @@ def test_expand_opacity_rationales_excludes_none_levels_by_default() -> None:
     ]
     assert expanded["level"].tolist() == ["potential", "clear", "potential"]
     assert expanded["embedding_input"].tolist() == expanded["rationale"].tolist()
-    assert expanded["embedding_text_source"].tolist() == ["rationale", "rationale", "rationale"]
+    assert expanded["embedding_text_source"].tolist() == [
+        "rationale",
+        "rationale",
+        "rationale",
+    ]
 
 
 def test_expand_opacity_rationales_can_embed_evidence() -> None:
@@ -70,14 +82,18 @@ def test_expand_opacity_rationales_can_embed_evidence() -> None:
                 "transcript_id": "work_1",
                 "voice_opacity_level": "potential",
                 "voice_opacity_form": "production",
-                "voice_opacity_rationale": "AI smooths over how the speaker actually sounds.",
+                "voice_opacity_rationale": (
+                    "AI smooths over how the speaker actually sounds."
+                ),
                 "voice_opacity_evidence": "Quote one || Quote two",
             },
             {
                 "transcript_id": "work_2",
                 "voice_opacity_level": "clear",
                 "voice_opacity_form": "avoidance",
-                "voice_opacity_rationale": "The speaker avoids AI in sensitive writing.",
+                "voice_opacity_rationale": (
+                    "The speaker avoids AI in sensitive writing."
+                ),
                 "voice_opacity_evidence": "",
             },
         ]
@@ -161,12 +177,75 @@ def test_build_cluster_summary_reports_cluster_examples() -> None:
     assert "uncertainty" in summary.loc[1, "top_terms"]
 
 
-def test_run_analysis_by_mechanism_uses_separate_output_dirs(monkeypatch, tmp_path) -> None:
+def test_expand_task_activity_results_explodes_json_lists() -> None:
+    results = pd.DataFrame(
+        [
+            {
+                "transcript_id": "work_1",
+                "transcript": "t1",
+                "mechanism": "voice_opacity",
+                "level": "clear",
+                "form": "production",
+                "task_activities": (
+                    '["drafting professional emails", '
+                    '"writing goodbye emails to colleagues"]'
+                ),
+            },
+            {
+                "transcript_id": "work_2",
+                "transcript": "t2",
+                "mechanism": "vulnerability_opacity",
+                "level": "none",
+                "form": "none",
+                "task_activities": '["ignored activity"]',
+            },
+        ]
+    )
+
+    expanded = expand_task_activity_results(results)
+
+    assert expanded["row_id"].tolist() == [
+        "work_1:voice_opacity:0",
+        "work_1:voice_opacity:1",
+    ]
+    assert expanded["task_activity"].tolist() == [
+        "drafting professional emails",
+        "writing goodbye emails to colleagues",
+    ]
+    assert expanded["embedding_input"].tolist() == expanded["task_activity"].tolist()
+    assert expanded["embedding_text_source"].tolist() == [
+        "task_activity",
+        "task_activity",
+    ]
+
+
+def test_expand_task_activity_results_accepts_legacy_strings() -> None:
+    results = pd.DataFrame(
+        [
+            {
+                "transcript_id": "work_1",
+                "mechanism": "voice_opacity",
+                "level": "potential",
+                "form": "production",
+                "task_activities": "drafting professional emails",
+            }
+        ]
+    )
+
+    expanded = expand_task_activity_results(results, mechanisms=["voice_opacity"])
+
+    assert expanded["row_id"].tolist() == ["work_1:voice_opacity:0"]
+    assert expanded["task_activity"].tolist() == ["drafting professional emails"]
+
+
+def test_run_analysis_by_mechanism_uses_separate_output_dirs(
+    monkeypatch,
+    tmp_path,
+) -> None:
     calls: list[dict[str, object]] = []
 
     def fake_run(results_csv, **kwargs):
         calls.append({"results_csv": results_csv, **kwargs})
-        mechanism = kwargs["mechanisms"][0]
         out_dir = kwargs["output_dir"]
         return type(
             "Artifacts",
@@ -239,3 +318,84 @@ def test_run_analysis_by_mechanism_respects_global_cluster_override(
     )
 
     assert [call["n_clusters"] for call in calls] == [9, 9]
+
+
+def test_run_task_activity_analysis_by_mechanism_uses_separate_output_dirs(
+    monkeypatch, tmp_path
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(results_csv, **kwargs):
+        calls.append({"results_csv": results_csv, **kwargs})
+        out_dir = kwargs["output_dir"]
+        return type(
+            "Artifacts",
+            (),
+            {
+                "activity_rows_path": out_dir / "activity_rows.csv",
+                "embeddings_path": out_dir / "embeddings.npy",
+                "clustered_points_path": out_dir / "clustered_activities.csv",
+                "cluster_summary_path": out_dir / "cluster_summary.csv",
+                "figure_path": out_dir / "umap_clusters.html",
+                "params_path": out_dir / "analysis_params.json",
+            },
+        )()
+
+    monkeypatch.setattr(
+        "interviewer.analysis.opacity_rationale_clustering.run_task_activity_analysis",
+        fake_run,
+    )
+
+    artifacts = run_task_activity_analysis_by_mechanism(
+        "results.csv",
+        output_dir=tmp_path,
+        mechanisms=["voice_opacity", "attention_opacity"],
+        levels=["potential", "clear"],
+    )
+
+    assert sorted(artifacts) == ["attention_opacity", "voice_opacity"]
+    assert [call["mechanisms"] for call in calls] == [
+        ["voice_opacity"],
+        ["attention_opacity"],
+    ]
+    assert [call["output_dir"] for call in calls] == [
+        tmp_path / "voice_opacity",
+        tmp_path / "attention_opacity",
+    ]
+    assert [call["n_clusters"] for call in calls] == [10, 10]
+
+
+def test_run_task_activity_analysis_by_mechanism_respects_cluster_mapping(
+    monkeypatch, tmp_path
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(results_csv, **kwargs):
+        calls.append({"results_csv": results_csv, **kwargs})
+        out_dir = kwargs["output_dir"]
+        return type(
+            "Artifacts",
+            (),
+            {
+                "activity_rows_path": out_dir / "activity_rows.csv",
+                "embeddings_path": out_dir / "embeddings.npy",
+                "clustered_points_path": out_dir / "clustered_activities.csv",
+                "cluster_summary_path": out_dir / "cluster_summary.csv",
+                "figure_path": out_dir / "umap_clusters.html",
+                "params_path": out_dir / "analysis_params.json",
+            },
+        )()
+
+    monkeypatch.setattr(
+        "interviewer.analysis.opacity_rationale_clustering.run_task_activity_analysis",
+        fake_run,
+    )
+
+    run_task_activity_analysis_by_mechanism(
+        "results.csv",
+        output_dir=tmp_path,
+        mechanisms=["voice_opacity", "attention_opacity"],
+        n_clusters={"voice_opacity": 18, "attention_opacity": 8},
+    )
+
+    assert [call["n_clusters"] for call in calls] == [18, 8]
